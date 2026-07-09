@@ -6,11 +6,22 @@ import { backupCurrent, replaceProgram } from "./update_files";
 import {
   getUpdateAssetName,
   getUpdateRestartCommand,
-  findBlockingUpdateInstances
+  findBlockingUpdateInstances,
+  getReleaseApiUrl
 } from "./update_helpers";
 
-assert.strictEqual(getUpdateAssetName("linux"), "mcsmanager_linux_release.tar.gz");
-assert.strictEqual(getUpdateAssetName("win32"), "mcsmanager_windows_release.zip");
+assert.strictEqual(getUpdateAssetName("web", "linux"), "mcsmanager_linux_web_only_release.tar.gz");
+assert.strictEqual(getUpdateAssetName("web", "win32"), "mcsmanager_windows_web_only_release.zip");
+assert.strictEqual(getUpdateAssetName("daemon", "linux"), "mcsmanager_linux_daemon_only_release.tar.gz");
+assert.strictEqual(getUpdateAssetName("daemon", "win32"), "mcsmanager_windows_daemon_only_release.zip");
+assert.strictEqual(
+  getReleaseApiUrl("web"),
+  "https://api.github.com/repos/zerogzy/MCSManager-Web/releases/latest"
+);
+assert.strictEqual(
+  getReleaseApiUrl("daemon"),
+  "https://api.github.com/repos/zerogzy/MCSManager-Daemon/releases/latest"
+);
 assert.strictEqual(getUpdateRestartCommand("linux"), "systemctl restart mcsm-web mcsm-daemon");
 assert.strictEqual(
   getUpdateRestartCommand("win32"),
@@ -80,6 +91,35 @@ async function assertReplaceSkipsBrokenLinks() {
   }
 }
 
-Promise.all([assertBackupSkipsBrokenLinks(), assertReplaceSkipsBrokenLinks()]).then(() => {
+async function assertWebOnlyReplacePreservesUploads() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcsm-web-only-root-"));
+  const source = await fs.mkdtemp(path.join(os.tmpdir(), "mcsm-web-only-source-"));
+  try {
+    await fs.outputFile(path.join(root, "web", "app.js"), "old");
+    await fs.outputFile(path.join(root, "web", "public", "upload_files", "keep.txt"), "keep");
+
+    await fs.outputFile(path.join(source, "web", "app.js"), "new");
+    await fs.outputFile(path.join(source, "web", "public", "index.html"), "index");
+
+    const backupPath = await backupCurrent(root, "10.16.7", ["web"]);
+    await replaceProgram(root, source, backupPath, ["web"]);
+
+    assert.strictEqual(await fs.readFile(path.join(root, "web", "app.js"), "utf-8"), "new");
+    assert.strictEqual(
+      await fs.readFile(path.join(root, "web", "public", "upload_files", "keep.txt"), "utf-8"),
+      "keep"
+    );
+    assert.strictEqual(await fs.pathExists(path.join(root, "daemon")), false);
+  } finally {
+    await fs.remove(root);
+    await fs.remove(source);
+  }
+}
+
+Promise.all([
+  assertBackupSkipsBrokenLinks(),
+  assertReplaceSkipsBrokenLinks(),
+  assertWebOnlyReplacePreservesUploads()
+]).then(() => {
   console.log("update_service self-check passed");
 });

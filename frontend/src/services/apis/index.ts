@@ -134,17 +134,28 @@ export const setSettingInfo = useDefineApi<
   method: "PUT"
 });
 
-export const checkPanelUpdate = useDefineApi<any, any>({
+export const getUpdateTargets = useDefineApi<any, any>({
+  url: "/api/update/targets",
+  method: "GET",
+  forceRequest: true
+});
+
+type UpdateTargetRequest = {
+  targetType: "web" | "daemon";
+  daemonId?: string;
+};
+
+export const checkPanelUpdate = useDefineApi<{ data: UpdateTargetRequest }, any>({
   url: "/api/update/check",
   method: "POST"
 });
 
-export const startPanelUpdate = useDefineApi<any, any>({
+export const startPanelUpdate = useDefineApi<{ data: UpdateTargetRequest }, any>({
   url: "/api/update/start",
   method: "POST"
 });
 
-export const getPanelUpdateStatus = useDefineApi<any, any>({
+export const getPanelUpdateStatus = useDefineApi<{ params: UpdateTargetRequest }, any>({
   url: "/api/update/status",
   method: "GET",
   forceRequest: true

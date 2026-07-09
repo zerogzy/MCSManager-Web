@@ -62,12 +62,6 @@ export async function replaceProgram(
 async function restoreRuntimeData(backupPath: string, rootDir: string, name: ProgramPart) {
   const dataDir = path.join(backupPath, name, "data");
   if (await fs.pathExists(dataDir)) await fs.copy(dataDir, path.join(rootDir, name, "data"));
-  if (name !== "web") return;
-
-  const uploads = path.join(backupPath, "web", "public", "upload_files");
-  if (await fs.pathExists(uploads)) {
-    await fs.copy(uploads, path.join(rootDir, "web", "public", "upload_files"));
-  }
 }
 
 async function copyProgramDir(source: string, target: string) {
@@ -105,11 +99,22 @@ async function extractZip(packagePath: string, extractDir: string) {
 
 async function validateExtractedPaths(extractDir: string) {
   const root = path.resolve(extractDir);
-  const entries = await fs.readdir(root, { recursive: true });
+  const entries = await listEntries(root);
   for (const entry of entries) {
     const fullPath = path.resolve(root, String(entry));
     if (!fullPath.startsWith(root + path.sep)) throw new Error(`更新包包含非法路径：${entry}`);
   }
+}
+
+async function listEntries(dir: string, base = ""): Promise<string[]> {
+  const result: string[] = [];
+  for (const entry of await fs.readdir(dir)) {
+    const rel = path.join(base, entry);
+    result.push(rel);
+    const fullPath = path.join(dir, entry);
+    if ((await fs.lstat(fullPath)).isDirectory()) result.push(...(await listEntries(fullPath, rel)));
+  }
+  return result;
 }
 
 function execFileText(command: string, args: string[]) {

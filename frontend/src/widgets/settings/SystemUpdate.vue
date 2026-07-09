@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { checkPanelUpdate, getPanelUpdateStatus, startPanelUpdate } from "@/services/apis";
+import {
+  checkPanelUpdate,
+  getPanelUpdateStatus,
+  getUpdateTargets,
+  startPanelUpdate
+} from "@/services/apis";
 import { reportErrorMsg } from "@/tools/validator";
 import type { Settings } from "@/types";
 import { Modal, message, notification } from "ant-design-vue";
@@ -11,12 +16,27 @@ const props = defineProps<{
   submitSettings: (needReload?: boolean) => Promise<void>;
 }>();
 
-const { execute: checkExecute, isLoading: checkLoading } = checkPanelUpdate();
-const { execute: startExecute, isLoading: startLoading } = startPanelUpdate();
+type UpdateTarget = {
+  key: string;
+  targetType: "web" | "daemon";
+  daemonId?: string;
+  name: string;
+  currentVersion: string;
+  platform?: string;
+  available: boolean;
+  address?: string;
+};
+
+const { execute: targetsExecute, isLoading: targetsLoading } = getUpdateTargets();
+const { execute: checkExecute } = checkPanelUpdate();
+const { execute: startExecute } = startPanelUpdate();
 const { execute: statusExecute } = getPanelUpdateStatus();
 
-const updateInfo = ref<any>();
-const updateStatus = ref<any>();
+const targets = ref<UpdateTarget[]>([]);
+const updateInfoMap = ref<Record<string, any>>({});
+const updateStatusMap = ref<Record<string, any>>({});
+const checkLoadingMap = ref<Record<string, boolean>>({});
+const startLoadingMap = ref<Record<string, boolean>>({});
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const GITHUB_PROXY_OPTIONS = [
@@ -24,9 +44,16 @@ const GITHUB_PROXY_OPTIONS = [
   { value: "https://ghproxy.vip" }
 ];
 
+const columns = [
+  { title: "更新目标", key: "target", width: 150 },
+  { title: "当前版本", key: "currentVersion", width: 96 },
+  { title: "最新版本", key: "latestVersion", width: 170 },
+  { title: "操作", key: "action", width: 280 }
+];
+
 const STATUS_LABELS: Record<string, string> = {
   idle: "暂无更新任务",
-  checking: "正在检查更新...",
+  checking: "正在检查...",
   checked: "检查完成",
   downloading: "正在下载更新包...",
   downloaded: "下载完成",
@@ -41,37 +68,77 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "更新失败"
 };
 
-const statusLabel = computed(() => {
-  return STATUS_LABELS[updateStatus.value?.status] || "未知状态";
+const activeStatuses = computed(() => {
+  return targets.value
+    .map((target) => ({ target, status: updateStatusMap.value[target.key] }))
+    .filter((item) => showUpdateProgress(item.status));
 });
 
-const isRunning = computed(() => {
-  const s = updateStatus.value?.status;
+const targetPayload = (target: any) => ({
+  targetType: target.targetType,
+  daemonId: target.daemonId
+});
+
+const setCheckLoading = (key: string, value: boolean) => {
+  checkLoadingMap.value = { ...checkLoadingMap.value, [key]: value };
+};
+
+const setStartLoading = (key: string, value: boolean) => {
+  startLoadingMap.value = { ...startLoadingMap.value, [key]: value };
+};
+
+const setInfo = (key: string, value: any) => {
+  updateInfoMap.value = { ...updateInfoMap.value, [key]: value };
+};
+
+const setStatus = (key: string, value: any) => {
+  updateStatusMap.value = { ...updateStatusMap.value, [key]: value };
+};
+
+const getInfo = (target: any) => updateInfoMap.value[target.key];
+const getStatus = (target: any) => updateStatusMap.value[target.key];
+
+const isRunning = (status: any) => {
+  const s = status?.status;
   return s && s !== "idle" && s !== "completed" && s !== "failed" && s !== "checked";
-});
+};
 
-const statusType = computed(() => {
-  const s = updateStatus.value?.status;
-  if (s === "completed") return "success";
-  if (s === "failed") return "exception";
-  if (isRunning.value) return "active";
+const showUpdateProgress = (status: any) => {
+  const s = status?.status;
+  return s && s !== "idle" && s !== "checked";
+};
+
+const statusType = (status: any) => {
+  if (status?.status === "completed") return "success";
+  if (status?.status === "failed") return "exception";
+  if (isRunning(status)) return "active";
   return "normal";
-});
+};
 
-const refreshStatus = async () => {
-  try {
-    const res = await statusExecute();
-    updateStatus.value = res.value;
-    const status = updateStatus.value?.status;
-    if (status === "completed" || status === "failed" || status === "idle") stopPolling();
-  } catch (error) {
-    stopPolling();
-  }
+const canStart = (target: any) => {
+  const info = getInfo(target);
+  return target.available && !isRunning(getStatus(target)) && info?.hasUpdate !== false;
+};
+
+const loadTargets = async () => {
+  const res = await targetsExecute();
+  targets.value = res.value || [];
+};
+
+const refreshStatus = async (target: any) => {
+  const res = await statusExecute({ params: targetPayload(target) });
+  setStatus(target.key, res.value);
+};
+
+const refreshRunningStatuses = async () => {
+  const runningTargets = targets.value.filter((target) => isRunning(getStatus(target)));
+  await Promise.all(runningTargets.map((target) => refreshStatus(target).catch(() => {})));
+  if (!targets.value.some((target) => isRunning(getStatus(target)))) stopPolling();
 };
 
 const startPolling = () => {
-  stopPolling();
-  timer = setInterval(refreshStatus, 1500);
+  if (timer) return;
+  timer = setInterval(refreshRunningStatuses, 1500);
 };
 
 const stopPolling = () => {
@@ -83,45 +150,53 @@ const saveUpdateSettings = async () => {
   await props.submitSettings(false);
 };
 
-const checkUpdate = async () => {
+const checkUpdate = async (target: any) => {
+  setCheckLoading(target.key, true);
   try {
-    const res = await checkExecute();
-    updateInfo.value = res.value;
-    updateStatus.value = await statusExecute().then((statusRes) => statusRes.value);
-    if (updateInfo.value?.hasUpdate) {
-      message.success(`发现新版本 ${updateInfo.value.latestVersion}`);
-    } else {
-      message.success("当前已是最新版本");
-    }
+    const res = await checkExecute({ data: targetPayload(target) });
+    setInfo(target.key, res.value);
+    await refreshStatus(target);
+    if (res.value?.hasUpdate) message.success(`${target.name} 发现新版本 ${res.value.latestVersion}`);
+    else message.success(`${target.name} 当前已经是最新版本`);
   } catch (error: any) {
     reportErrorMsg(error);
+  } finally {
+    setCheckLoading(target.key, false);
   }
 };
 
-const startUpdate = async () => {
+const startUpdate = async (target: any) => {
+  if (!canStart(target)) return;
   Modal.confirm({
-    title: "确认开始自动更新？",
+    title: `确认更新 ${target.name}？`,
     content:
-      "系统将下载完整 Release 包，备份并替换 web/daemon 程序文件，然后自动重启 MCSManager 服务。运行中的普通进程实例会阻止更新，Docker 实例会在后端重启后重新接管。",
+      target.targetType === "web"
+        ? "将下载 Web 更新包，备份并替换 Web 程序文件，然后自动重启 Web 服务。"
+        : "将通过 Web 面板通知该 Daemon 下载更新包，备份并替换 Daemon 程序文件，然后自动重启 Daemon 服务。Docker 实例会在重启后重新接管。",
     okType: "danger",
     async onOk() {
+      setStartLoading(target.key, true);
       try {
-        const res = await startExecute();
-        updateStatus.value = res.value;
-        notification.info({ message: "更新任务已开始", description: "页面将自动刷新更新进度。" });
+        const res = await startExecute({ data: targetPayload(target) });
+        setStatus(target.key, res.value);
+        notification.info({ message: "更新任务已开始", description: target.name });
         startPolling();
       } catch (error: any) {
         reportErrorMsg(error);
+      } finally {
+        setStartLoading(target.key, false);
       }
     }
   });
 };
 
-const formatTime = (ts: number) => {
-  return new Date(ts).toLocaleTimeString();
-};
+const formatTime = (ts: number) => new Date(ts).toLocaleTimeString();
 
-onMounted(refreshStatus);
+onMounted(async () => {
+  await loadTargets();
+  await Promise.all(targets.value.map((target) => refreshStatus(target).catch(() => {})));
+  if (targets.value.some((target) => isRunning(getStatus(target)))) startPolling();
+});
 onUnmounted(stopPolling);
 </script>
 
@@ -136,7 +211,7 @@ onUnmounted(stopPolling);
       <a-auto-complete
         v-model:value="formData.updateDownloadProxyUrl"
         :options="GITHUB_PROXY_OPTIONS"
-        placeholder="留空则直连 GitHub 下载"
+        placeholder="留空则直接访问 GitHub"
         style="max-width: 640px"
       />
     </a-form-item>
@@ -148,170 +223,154 @@ onUnmounted(stopPolling);
     </div>
 
     <a-divider />
-
-    <!-- 更新操作 -->
     <a-typography-title :level="5" class="mb-16">版本检查与更新</a-typography-title>
 
-    <a-space class="mb-20">
-      <a-button :loading="checkLoading" @click="checkUpdate">检查更新</a-button>
-      <a-button
-        type="primary"
-        danger
-        :loading="startLoading"
-        :disabled="isRunning"
-        @click="startUpdate"
-      >
-        立即更新
-      </a-button>
-    </a-space>
-
-    <!-- 检查结果 -->
-    <div v-if="updateInfo" class="mb-20">
-      <a-descriptions bordered size="small" :column="{ xs: 1, sm: 2 }">
-        <a-descriptions-item label="当前版本">
-          {{ updateInfo.currentVersion }}
-        </a-descriptions-item>
-        <a-descriptions-item label="最新版本">
-          <span :style="{ color: updateInfo.hasUpdate ? '#52c41a' : undefined, fontWeight: updateInfo.hasUpdate ? 600 : 400 }">
-            {{ updateInfo.latestVersion }}
-          </span>
-          <a-tag v-if="updateInfo.hasUpdate" color="green" style="margin-left: 8px">有新版本</a-tag>
-          <a-tag v-else color="default" style="margin-left: 8px">已是最新</a-tag>
-        </a-descriptions-item>
-        <a-descriptions-item label="更新包">
-          {{ updateInfo.assetName }}
-        </a-descriptions-item>
-        <a-descriptions-item label="Release 页面">
-          <a :href="updateInfo.releaseUrl" target="_blank" rel="noopener">查看详情</a>
-        </a-descriptions-item>
-        <a-descriptions-item label="下载地址" :span="2">
-          <a :href="updateInfo.downloadUrl" target="_blank" rel="noopener">
-            {{ updateInfo.downloadUrl }}
-          </a>
-        </a-descriptions-item>
-      </a-descriptions>
-    </div>
-
-    <!-- 更新任务状态 -->
-    <div v-if="updateStatus && updateStatus.status !== 'idle'">
-      <a-card size="small" class="update-status-card">
-        <template #title>
-          <span>更新进度</span>
-          <a-tag
-            :color="updateStatus.status === 'completed' ? 'green' : updateStatus.status === 'failed' ? 'red' : 'blue'"
-            style="margin-left: 8px"
-          >
-            {{ statusLabel }}
-          </a-tag>
+    <a-table
+      :columns="columns"
+      :data-source="targets"
+      :loading="targetsLoading"
+      :pagination="false"
+      row-key="key"
+      size="small"
+      class="mb-20"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'target'">
+          <div class="target-name">{{ record.name }}</div>
+          <div class="target-meta">
+            {{ record.targetType === "web" ? "Web 面板" : record.address || "Daemon" }}
+            <a-tag v-if="!record.available" color="red" class="ml-8">离线</a-tag>
+          </div>
         </template>
-
-        <a-progress
-          :percent="updateStatus.progress || 0"
-          :status="statusType"
-          :stroke-color="updateStatus.status === 'failed' ? '#ff4d4f' : undefined"
-        />
-
-        <p v-if="updateStatus.message && updateStatus.status !== 'failed'" class="status-message">
-          {{ updateStatus.message }}
-        </p>
-
-        <a-alert
-          v-if="updateStatus.error"
-          type="error"
-          :message="updateStatus.error"
-          show-icon
-          class="mt-12"
-        />
-
-        <p v-if="updateStatus.backupPath" class="backup-path">
-          备份目录：<code>{{ updateStatus.backupPath }}</code>
-        </p>
-
-        <!-- 日志区域 -->
-        <div v-if="updateStatus.logs?.length" class="update-logs mt-12">
-          <a-typography-text type="secondary" style="font-size: 12px">操作日志</a-typography-text>
-          <div class="log-list">
-            <div
-              v-for="(item, index) in updateStatus.logs"
-              :key="index"
-              class="log-item"
-              :class="'log-' + item.level"
+        <template v-else-if="column.key === 'currentVersion'">
+          <span class="version-text">{{ getInfo(record)?.currentVersion || record.currentVersion || "-" }}</span>
+        </template>
+        <template v-else-if="column.key === 'latestVersion'">
+          <div v-if="getInfo(record)" class="latest-version-cell">
+            <span class="version-text">{{ getInfo(record).latestVersion }}</span>
+            <a-tag v-if="getInfo(record).hasUpdate" color="green" class="version-tag">有新版本</a-tag>
+            <a-tag v-else class="version-tag">已是最新</a-tag>
+          </div>
+          <span v-else>-</span>
+        </template>
+        <template v-else-if="column.key === 'action'">
+          <a-space :size="8" wrap>
+            <a-button
+              :loading="checkLoadingMap[record.key]"
+              :disabled="!record.available || isRunning(getStatus(record))"
+              @click="checkUpdate(record)"
             >
-              <span class="log-time">{{ formatTime(item.time) }}</span>
-              <span class="log-msg">{{ item.message }}</span>
-            </div>
+              检查更新
+            </a-button>
+            <a-button
+              type="primary"
+              danger
+              :loading="startLoadingMap[record.key]"
+              :disabled="!canStart(record)"
+              @click="startUpdate(record)"
+            >
+              立即更新
+            </a-button>
+          </a-space>
+        </template>
+      </template>
+    </a-table>
+
+    <a-card
+      v-for="{ target, status } in activeStatuses"
+      :key="target.key"
+      size="small"
+      class="update-status-card mb-20"
+    >
+      <template #title>
+        <span>{{ target.name }} 更新进度</span>
+        <a-tag
+          :color="status.status === 'completed' ? 'green' : status.status === 'failed' ? 'red' : 'blue'"
+          class="ml-8"
+        >
+          {{ STATUS_LABELS[status.status] || "未知状态" }}
+        </a-tag>
+      </template>
+
+      <a-progress
+        :percent="status.progress || 0"
+        :status="statusType(status)"
+        :stroke-color="status.status === 'failed' ? '#ff4d4f' : undefined"
+      />
+
+      <p v-if="status.message && status.status !== 'failed'" class="status-message">
+        {{ status.message }}
+      </p>
+
+      <a-alert v-if="status.error" type="error" :message="status.error" show-icon class="mt-12" />
+
+      <p v-if="status.backupPath" class="backup-path">
+        备份目录：<code>{{ status.backupPath }}</code>
+      </p>
+
+      <div v-if="status.logs?.length" class="update-logs mt-12">
+        <a-typography-text type="secondary" style="font-size: 12px">操作日志</a-typography-text>
+        <div class="log-list">
+          <div
+            v-for="(item, index) in status.logs"
+            :key="index"
+            class="log-item"
+            :class="'log-' + item.level"
+          >
+            <span class="log-time">{{ formatTime(item.time) }}</span>
+            <span class="log-msg">{{ item.message }}</span>
           </div>
         </div>
-      </a-card>
-    </div>
+      </div>
+    </a-card>
   </a-form>
 </template>
 
 <style scoped>
-.mb-20 {
-  margin-bottom: 20px;
-}
+.mb-16 { margin-bottom: 16px; }
+.mb-20 { margin-bottom: 20px; }
+.mb-24 { margin-bottom: 24px; }
+.mt-12 { margin-top: 12px; }
+.ml-8 { margin-left: 8px; }
+.target-name { font-weight: 600; }
 
-.mt-12 {
-  margin-top: 12px;
-}
-
-.status-message {
-  margin: 8px 0 0;
-  color: rgba(0, 0, 0, 0.65);
-  font-size: 13px;
-}
-
+.target-meta,
+.status-message,
 .backup-path {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.45);
+  color: #8c8c8c;
 }
 
-.backup-path code {
-  background: rgba(0, 0, 0, 0.04);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 12px;
+.version-text { white-space: nowrap; }
+
+.latest-version-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.update-status-card {
-  margin-top: 4px;
-}
+.version-tag { margin-left: 0; }
 
-.update-logs {
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-  padding-top: 8px;
-}
+.update-status-card { max-width: 1120px; }
 
 .log-list {
-  max-height: 200px;
-  overflow-y: auto;
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.8;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
 }
 
 .log-item {
   display: flex;
-  gap: 8px;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.8;
 }
 
 .log-time {
-  color: rgba(0, 0, 0, 0.35);
-  flex-shrink: 0;
+  color: #999;
+  min-width: 64px;
 }
 
-.log-msg {
-  color: rgba(0, 0, 0, 0.65);
-  word-break: break-all;
-}
-
-.log-error .log-msg {
-  color: #ff4d4f;
-}
-
-.log-warn .log-msg {
-  color: #faad14;
-}
+.log-error .log-msg { color: #ff4d4f; }
+.log-warn .log-msg { color: #faad14; }
 </style>

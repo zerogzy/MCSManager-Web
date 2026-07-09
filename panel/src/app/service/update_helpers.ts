@@ -1,6 +1,19 @@
-const UPDATE_ASSET_NAMES: Partial<Record<NodeJS.Platform, string>> = {
-  linux: "mcsmanager_linux_release.tar.gz",
-  win32: "mcsmanager_windows_release.zip"
+export type UpdateTargetType = "web" | "daemon";
+
+const UPDATE_ASSET_NAMES: Record<UpdateTargetType, Partial<Record<NodeJS.Platform, string>>> = {
+  web: {
+    linux: "mcsmanager_linux_web_only_release.tar.gz",
+    win32: "mcsmanager_windows_web_only_release.zip"
+  },
+  daemon: {
+    linux: "mcsmanager_linux_daemon_only_release.tar.gz",
+    win32: "mcsmanager_windows_daemon_only_release.zip"
+  }
+};
+
+const UPDATE_RELEASE_APIS: Record<UpdateTargetType, string> = {
+  web: "https://api.github.com/repos/zerogzy/MCSManager-Web/releases/latest",
+  daemon: "https://api.github.com/repos/zerogzy/MCSManager-Daemon/releases/latest"
 };
 
 const UPDATE_RESTART_COMMANDS: Partial<Record<NodeJS.Platform, string>> = {
@@ -20,10 +33,17 @@ export type UpdateInstanceSnapshot = {
   };
 };
 
-export function getUpdateAssetName(platform: NodeJS.Platform = process.platform) {
-  const assetName = UPDATE_ASSET_NAMES[platform];
+export function getUpdateAssetName(
+  targetType: UpdateTargetType = "web",
+  platform: NodeJS.Platform = process.platform
+) {
+  const assetName = UPDATE_ASSET_NAMES[targetType]?.[platform];
   if (!assetName) throw new Error("自动更新仅支持 Linux 和 Windows 环境");
   return assetName;
+}
+
+export function getReleaseApiUrl(targetType: UpdateTargetType = "web") {
+  return UPDATE_RELEASE_APIS[targetType];
 }
 
 export function getUpdateRestartCommand(platform: NodeJS.Platform = process.platform) {

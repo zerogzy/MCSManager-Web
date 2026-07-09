@@ -60,6 +60,7 @@ const submit = async () => {
   if (image === props.instanceInfo?.config?.docker?.image) return close();
 
   Modal.confirm({
+    centered: true,
     title: "确认切换 Java Docker 镜像？",
     content: "将把当前实例的 Docker 镜像改为所选 Java 镜像。已运行的容器不会立即改变，请重启实例后生效。",
     async onOk() {
@@ -85,6 +86,7 @@ const submit = async () => {
     }
   });
 };
+
 
 defineExpose({
   openDialog

@@ -33,4 +33,7 @@ export {
   normalizeDockerPlatform
 } from "./docker_utils";
 
+export { launchReplacementHelper } from "./replacement_helper";
+export type { ReplacementPart } from "./replacement_helper";
+
 export { GlobalVariable, InstanceStreamListener, MCServerStatus, StorageSubsystem };

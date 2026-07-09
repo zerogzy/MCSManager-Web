@@ -134,7 +134,6 @@ const showCardOperator = (card: ILayoutCard) => {
   position: relative;
 }
 .main-flex-center {
-  margin-top: 10vh;
   height: 100%;
   width: 100%;
   text-align: center;

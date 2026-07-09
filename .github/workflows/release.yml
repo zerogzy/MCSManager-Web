@@ -61,7 +61,24 @@ jobs:
           zip -r mcsmanager_windows_web_only_release.zip mcsmanager/ -x "mcsmanager/daemon/*"
           zip -r mcsmanager_windows_daemon_only_release.zip mcsmanager/ -x "mcsmanager/web/*"
 
-      - name: Upload assets to release
+      - name: Upload web assets to release
+        if: ${{ endsWith(github.repository, '/MCSManager-Web') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mcsmanager_windows_web_only_release.zip
+            mcsmanager_linux_web_only_release.tar.gz
+
+      - name: Upload daemon assets to release
+        if: ${{ endsWith(github.repository, '/MCSManager-Daemon') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mcsmanager_windows_daemon_only_release.zip
+            mcsmanager_linux_daemon_only_release.tar.gz
+
+      - name: Upload full assets to release
+        if: ${{ !endsWith(github.repository, '/MCSManager-Web') && !endsWith(github.repository, '/MCSManager-Daemon') }}
         uses: softprops/action-gh-release@v2
         with:
           files: |
