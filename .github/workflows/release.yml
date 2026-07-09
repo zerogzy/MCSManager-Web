@@ -3,6 +3,12 @@ name: Release Build
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v10.16.7
 
 permissions:
   contents: write
@@ -65,6 +71,7 @@ jobs:
         if: ${{ endsWith(github.repository, '/MCSManager-Web') }}
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
           files: |
             mcsmanager_windows_web_only_release.zip
             mcsmanager_linux_web_only_release.tar.gz
@@ -73,6 +80,7 @@ jobs:
         if: ${{ endsWith(github.repository, '/MCSManager-Daemon') }}
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
           files: |
             mcsmanager_windows_daemon_only_release.zip
             mcsmanager_linux_daemon_only_release.tar.gz
@@ -81,6 +89,7 @@ jobs:
         if: ${{ !endsWith(github.repository, '/MCSManager-Web') && !endsWith(github.repository, '/MCSManager-Daemon') }}
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
           files: |
             mcsmanager_windows_release.zip
             mcsmanager_windows_web_only_release.zip
