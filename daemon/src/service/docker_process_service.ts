@@ -596,6 +596,12 @@ export class DockerProcessAdapter extends EventEmitter implements IInstanceProce
     return true;
   }
 
+  public detach() {
+    this.stream?.write("\x10\x11");
+    this.stream?.removeAllListeners();
+    this.stream = undefined;
+  }
+
   public async destroy() {
     try {
       await this.container?.remove();

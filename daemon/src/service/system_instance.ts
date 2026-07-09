@@ -323,6 +323,7 @@ class InstanceSubsystem extends EventEmitter {
       const instance = iterator[1];
       if (instance.status() !== Instance.STATUS_STOP) {
         if (skipDocker && instance.config.processType === "docker") {
+          instance.process?.detach?.();
           logger.info(
             `Skipping Docker instance ${instance.config.nickname} (${instance.instanceUuid}) during soft shutdown...`
           );
