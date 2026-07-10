@@ -38,6 +38,8 @@ const updateStatusMap = ref<Record<string, any>>({});
 const checkLoadingMap = ref<Record<string, boolean>>({});
 const startLoadingMap = ref<Record<string, boolean>>({});
 let timer: ReturnType<typeof setInterval> | undefined;
+const completedStatusTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const COMPLETED_STATUS_VISIBLE_MS = 5000;
 
 const GITHUB_PROXY_OPTIONS = [
   { value: "https://v4.gh-proxy.org" },
@@ -91,8 +93,30 @@ const setInfo = (key: string, value: any) => {
   updateInfoMap.value = { ...updateInfoMap.value, [key]: value };
 };
 
+const hideStatus = (key: string) => {
+  updateStatusMap.value = Object.fromEntries(
+    Object.entries(updateStatusMap.value).filter(([itemKey]) => itemKey !== key)
+  );
+};
+
+const scheduleCompletedStatusHide = (key: string, status: any) => {
+  const oldTimer = completedStatusTimers.get(key);
+  if (oldTimer) clearTimeout(oldTimer);
+  if (status?.status !== "completed") return completedStatusTimers.delete(key);
+  const age = status.finishedAt ? Date.now() - Number(status.finishedAt) : 0;
+  const delay = Math.max(0, COMPLETED_STATUS_VISIBLE_MS - age);
+  completedStatusTimers.set(
+    key,
+    setTimeout(() => {
+      hideStatus(key);
+      completedStatusTimers.delete(key);
+    }, delay)
+  );
+};
+
 const setStatus = (key: string, value: any) => {
   updateStatusMap.value = { ...updateStatusMap.value, [key]: value };
+  scheduleCompletedStatusHide(key, value);
 };
 
 const getInfo = (target: any) => updateInfoMap.value[target.key];
@@ -198,6 +222,10 @@ onMounted(async () => {
   if (targets.value.some((target) => isRunning(getStatus(target)))) startPolling();
 });
 onUnmounted(stopPolling);
+onUnmounted(() => {
+  completedStatusTimers.forEach((item) => clearTimeout(item));
+  completedStatusTimers.clear();
+});
 </script>
 
 <template>
